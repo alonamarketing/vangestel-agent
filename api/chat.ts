@@ -380,9 +380,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       messages.push({ role: "assistant", content: response.content });
 
+      // Always capture text from the current response, whatever the stop reason.
+      const currentText = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      if (currentText?.text) reply = currentText.text;
+
       if (response.stop_reason === "end_turn") {
-        const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-        reply = textBlock?.text ?? "";
         break;
       }
 
@@ -391,14 +393,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
         );
 
-        const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
-          toolUseBlocks.map(async (block) => {
-            if (block.name === "suggest_options") {
-              const raw = (block.input as { options?: unknown }).options;
-              if (Array.isArray(raw)) {
-                options = raw.filter((o): o is string => typeof o === "string").slice(0, 4);
-              }
+        // Capture options before executing tools.
+        for (const block of toolUseBlocks) {
+          if (block.name === "suggest_options") {
+            const raw = (block.input as { options?: unknown }).options;
+            if (Array.isArray(raw)) {
+              options = raw.filter((o): o is string => typeof o === "string").slice(0, 4);
             }
+          }
+        }
+
+        // If the only tool call was suggest_options we already have the reply; no need to continue.
+        const realToolBlocks = toolUseBlocks.filter((b) => b.name !== "suggest_options");
+        if (realToolBlocks.length === 0) break;
+
+        const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+          realToolBlocks.map(async (block) => {
             const result = await executeTool(block.name, block.input as Record<string, unknown>);
             return {
               type: "tool_result" as const,
@@ -412,9 +422,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      // max_tokens or other stop reason — extract any text and stop
-      const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      reply = textBlock?.text ?? "Er is iets misgegaan. Probeer het opnieuw.";
+      // max_tokens or other stop reason — stop with whatever text we have.
+      if (!reply) reply = "Er is iets misgegaan. Probeer het opnieuw.";
       break;
     }
 
