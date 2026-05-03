@@ -82,10 +82,10 @@ Prijsindicaties (inclusief BTW en plaatsing):
 - Plan afspraken ALTIJD binnen de komende 14 dagen (${vandaag} t/m ${over14dagen}). Stel nooit een datum voor die al geweest is.
 
 ## Keuze-opties (suggest_options tool)
-Gebruik suggest_options op elk beslismoment — dus bij elke vraag uit de gespreksstructuur. Geef maximaal 4 korte opties. Voorbeelden:
+Roep suggest_options VERPLICHT aan bij elke vraag uit de gespreksstructuur. Geen uitzonderingen. Gebruik exact de onderstaande opties per stap:
 - Stap 1 — product: ["Kozijnen/ramen", "Deuren", "Schuifpui", "Meerdere producten"]
 - Stap 2 — materiaal: ["Kunststof", "Aluminium", "Weet ik nog niet"]
-- Stap 3 — aantal: ["1-2 ramen", "3-5 ramen", "6 of meer"]
+- Stap 3 — aantal: ["1-2 ramen", "3-5 ramen", "6 of meer", "Weet ik nog niet"]
 - Stap 4 — situatie: ["Renovatie", "Nieuwbouw", "Weet ik nog niet"]
 - Stap 5 / urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]`;
 }
