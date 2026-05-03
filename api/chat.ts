@@ -48,6 +48,7 @@ Stap 2 — Materiaal: Kunststof of Aluminium?
 Stap 3 — Omvang: Hoeveel ramen/deuren gaat het ongeveer om?
 Stap 4 — Situatie: Renovatie van een bestaande woning of nieuwbouw?
 Stap 5 — Contact: Vraag naam én telefoonnummer voor een gratis opmeetafspraak.
+Stap 6 — Adres: Vraag na het bevestigen van de afspraak het bezoekadres van de klant (straat + huisnummer, postcode, plaats). Sla dit op via save_lead.
 
 Sla een stap over als de klant die informatie al eerder gaf. Ga nooit terug naar een stap die al beantwoord is.
 
@@ -73,6 +74,7 @@ Prijsindicaties (inclusief BTW en plaatsing):
 - Wees vriendelijk en bondig; geen lange lappen tekst.
 - Geef prijsindicaties altijd als richtprijs; exacte offerte volgt na de gratis opmeetafspraak.
 - Zodra je naam én telefoonnummer hebt: sla de lead op (save_lead) en stel een afspraak voor.
+- Na het bevestigen van de afspraak vraag je het bezoekadres (straat + huisnummer, postcode, plaats) en sla je dat op via save_lead (opnieuw aanroepen met het adres).
 - Bij een hot lead of expliciete afspraakwens: plan direct in via schedule_appointment.
 - Verwijs bij complexe technische vragen naar een vakkundige adviseur van Van Gestel.
 - Gebruik NOOIT markdown-opmaak: geen **, geen *, geen #, geen _, geen backticks. Schrijf altijd gewone platte tekst.
@@ -101,6 +103,7 @@ const TOOLS: Anthropic.Tool[] = [
         phone: { type: "string", description: "Telefoonnummer van de lead (optioneel)" },
         interesse: { type: "string", description: "Korte omschrijving van het project of de interesse (bijv. 'PVC kozijnen woonkamer, 4 ramen')" },
         kwalificatie: { type: "string", enum: ["hot", "warm", "cold"], description: "Leadkwalificatie op basis van urgentie en koopintentie" },
+        adres: { type: "string", description: "Volledig bezoekadres: straat + huisnummer, postcode, plaats (optioneel, invullen zodra bekend)" },
         notities: { type: "string", description: "Aanvullende notities over de lead of het gesprek (optioneel)" },
       },
       required: ["firstName", "kwalificatie"],
@@ -187,6 +190,7 @@ interface LeadInput {
   phone?: string;
   interesse?: string;
   kwalificatie: "hot" | "warm" | "cold";
+  adres?: string;
   notities?: string;
 }
 
@@ -231,6 +235,7 @@ async function sendLeadEmail(input: LeadInput, contactId: string): Promise<void>
         ${input.phone ? `<tr><td><strong>Telefoon</strong></td><td>${input.phone}</td></tr>` : ""}
         ${input.email ? `<tr><td><strong>E-mail</strong></td><td>${input.email}</td></tr>` : ""}
         <tr><td><strong>Kwalificatie</strong></td><td>${input.kwalificatie.toUpperCase()}</td></tr>
+        ${input.adres ? `<tr><td><strong>Adres</strong></td><td>${input.adres}</td></tr>` : ""}
         ${input.interesse ? `<tr><td><strong>Interesse</strong></td><td>${input.interesse}</td></tr>` : ""}
         ${input.notities ? `<tr><td><strong>Notities</strong></td><td>${input.notities}</td></tr>` : ""}
         <tr><td><strong>CRM contact ID</strong></td><td>${contactId}</td></tr>
@@ -255,6 +260,7 @@ async function saveLead(input: LeadInput): Promise<string> {
   if (input.lastName) body.lastName = input.lastName;
   if (input.email) body.email = input.email;
   if (input.phone) body.phone = input.phone;
+  if (input.adres) body.address1 = input.adres;
   if (input.notities) body.notes = input.notities;
 
   const res = await fetch(`${HIGHLEVEL_BASE}/contacts/`, {
