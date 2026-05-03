@@ -76,6 +76,7 @@ Prijsindicaties (inclusief BTW en plaatsing):
 - Bij een hot lead of expliciete afspraakwens: plan direct in via schedule_appointment.
 - Verwijs bij complexe technische vragen naar een vakkundige adviseur van Van Gestel.
 - Gebruik NOOIT markdown-opmaak: geen **, geen *, geen #, geen _, geen backticks. Schrijf altijd gewone platte tekst.
+- Roep ALTIJD eerst get_available_slots aan voordat je een afspraaktijd voorstelt. Stel uitsluitend tijdslots voor die in het resultaat van die tool staan.
 - Plan afspraken ALTIJD binnen de komende 14 dagen (${vandaag} t/m ${over14dagen}). Stel nooit een datum voor die al geweest is.
 
 ## Keuze-opties (suggest_options tool)
@@ -151,6 +152,15 @@ const TOOLS: Anthropic.Tool[] = [
         aantal: { type: "number", description: "Aantal stuks (standaard 1)" },
       },
       required: ["productType", "maat"],
+    },
+  },
+  {
+    name: "get_available_slots",
+    description: "Haal beschikbare tijdslots op uit de HighLevel kalender voor de komende 14 dagen. Roep deze tool ALTIJD aan voordat je een afspraaktijd voorstelt aan de klant.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
     },
   },
   {
@@ -269,6 +279,67 @@ async function saveLead(input: LeadInput): Promise<string> {
   return `Lead opgeslagen in CRM. Contact ID: ${contactId}. Kwalificatie: ${input.kwalificatie}.`;
 }
 
+async function getAvailableSlots(): Promise<string> {
+  const calendarId = process.env.HIGHLEVEL_CALENDAR_ID;
+  if (!calendarId) return "HIGHLEVEL_CALENDAR_ID is niet geconfigureerd.";
+
+  const now = new Date();
+  const in14 = new Date(now);
+  in14.setDate(in14.getDate() + 14);
+
+  // HighLevel expects Unix timestamps in milliseconds
+  const url =
+    `${HIGHLEVEL_BASE}/calendars/${calendarId}/free-slots` +
+    `?startDate=${now.getTime()}&endDate=${in14.getTime()}` +
+    `&timezone=${encodeURIComponent("Europe/Amsterdam")}`;
+
+  const res = await fetch(url, { headers: await hlHeaders() });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("HighLevel free-slots fout:", res.status, err);
+    return `Fout bij ophalen beschikbare tijdslots: ${res.status}`;
+  }
+
+  const data = (await res.json()) as Record<string, unknown>;
+
+  const lines: string[] = [];
+
+  for (const [key, value] of Object.entries(data)) {
+    // Keys are ISO dates "YYYY-MM-DD"; skip metadata fields
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+
+    let slots: string[] = [];
+    if (Array.isArray(value)) {
+      slots = value
+        .map((s: unknown) => {
+          if (typeof s === "string") return s;
+          if (typeof s === "object" && s !== null) {
+            const obj = s as Record<string, unknown>;
+            return typeof obj.time === "string" ? obj.time : null;
+          }
+          return null;
+        })
+        .filter((s): s is string => s !== null)
+        .slice(0, 6);
+    }
+
+    if (slots.length === 0) continue;
+
+    const [y, m, d] = key.split("-").map(Number);
+    const label = new Date(y, m - 1, d).toLocaleDateString("nl-NL", {
+      weekday: "long", day: "numeric", month: "long",
+    });
+    lines.push(`${label}: ${slots.join(", ")}`);
+  }
+
+  if (lines.length === 0) {
+    return "Geen beschikbare tijdslots gevonden voor de komende 14 dagen.";
+  }
+
+  return "Beschikbare tijdslots:\n" + lines.join("\n");
+}
+
 async function scheduleAppointment(input: AppointmentInput): Promise<string> {
   const calendarId = process.env.HIGHLEVEL_CALENDAR_ID;
   if (!calendarId) return "HIGHLEVEL_CALENDAR_ID is niet geconfigureerd.";
@@ -355,6 +426,8 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
   switch (name) {
     case "save_lead":
       return saveLead(input as unknown as LeadInput);
+    case "get_available_slots":
+      return getAvailableSlots();
     case "schedule_appointment":
       return scheduleAppointment(input as unknown as AppointmentInput);
     case "calculate_isde_subsidy":
