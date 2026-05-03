@@ -225,7 +225,7 @@ async function hlHeaders() {
 async function sendLeadEmail(input: LeadInput, contactId: string): Promise<void> {
   const naam = [input.firstName, input.lastName].filter(Boolean).join(" ");
   const { error } = await resend.emails.send({
-    from: "Alona <noreply@vangestelkozijnen.nl>",
+    from: "Alona <onboarding@resend.dev>",
     to: "thijsvandenhaak@gmail.com",
     subject: `Nieuwe lead Van Gestel: ${naam}`,
     html: `
