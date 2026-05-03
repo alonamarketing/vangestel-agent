@@ -27,7 +27,7 @@ const SYSTEM_PROMPT = `Je bent Alona, de vriendelijke AI-assistent van Van Geste
 
 Je taken:
 1. Begroet bezoekers hartelijk en stel je voor als Alona van Van Gestel.
-2. Beantwoord vragen over kozijnen (PVC, aluminium), ramen, deuren, schuifpuien en installatiewerk.
+2. Beantwoord vragen over kozijnen (Kunststof, aluminium), ramen, deuren, schuifpuien en installatiewerk.
 3. Leg de ISDE subsidie 2026 uit en bereken het subsidiebedrag op basis van glazen oppervlak en glastype.
 4. Geef prijsindicaties op basis van type product en afmetingen (altijd inclusief BTW en plaatsing).
 5. Kwalificeer leads als hot/warm/cold op basis van urgentie en koopintentie.
@@ -40,21 +40,30 @@ ISDE subsidie 2026:
 - Subsidie is aan te vragen via RVO.nl, geldig voor eigenaar-bewoners in Nederland
 
 Prijsindicaties (inclusief BTW en plaatsing):
-- PVC kozijn: €400–700 per m²
+- Kunststof kozijn: €400–700 per m²
 - Aluminium kozijn: €600–1.000 per m²
-- PVC voordeur: €1.800–3.500 per stuk
+- Kunststof voordeur: €1.800–3.500 per stuk
 - Aluminium voordeur: €2.500–5.000 per stuk
-- PVC schuifpui: €2.000–4.500 per meter breedte
+- Kunststof schuifpui: €2.000–4.500 per meter breedte
 - Aluminium schuifpui: €3.000–6.000 per meter breedte
 
 Regels:
 - Antwoord ALTIJD in het Nederlands.
+- Zeg ALTIJD "Kunststof" in plaats van "PVC".
 - Wees vriendelijk, professioneel en behulpzaam.
 - Vraag proactief naar naam en contactgegevens zodra de bezoeker interesse toont.
 - Sla contactgegevens op zodra je ze hebt (gebruik save_lead tool).
 - Bij een hot lead of als de bezoeker een afspraak wil: plan direct in via schedule_appointment.
 - Geef altijd aan dat prijsindicaties richtprijzen zijn; een exacte offerte volgt na een gratis opmeetafspraak.
-- Verwijs bij complexe technische vragen altijd naar een vakkundige adviseur van Van Gestel.`;
+- Verwijs bij complexe technische vragen altijd naar een vakkundige adviseur van Van Gestel.
+
+Keuze-opties tonen (suggest_options tool):
+- Gebruik suggest_options alleen op zinvolle beslismomenten, niet na elk bericht.
+- Materiaalvraag: ["Kunststof", "Aluminium", "Weet ik nog niet"]
+- Glastype: ["HR++ glas", "Triple glas", "Weet ik nog niet"]
+- Urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]
+- Aantal ramen: ["1-2 ramen", "3-5 ramen", "6 of meer"]
+- Maximaal 4 opties per keer.`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -110,7 +119,7 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         productType: {
           type: "string",
-          enum: ["kozijn_pvc", "kozijn_aluminium", "voordeur_pvc", "voordeur_aluminium", "schuifpui_pvc", "schuifpui_aluminium"],
+          enum: ["kozijn_kunststof", "kozijn_aluminium", "voordeur_kunststof", "voordeur_aluminium", "schuifpui_kunststof", "schuifpui_aluminium"],
           description: "Type product",
         },
         maat: {
@@ -120,6 +129,21 @@ const TOOLS: Anthropic.Tool[] = [
         aantal: { type: "number", description: "Aantal stuks (standaard 1)" },
       },
       required: ["productType", "maat"],
+    },
+  },
+  {
+    name: "suggest_options",
+    description: "Toon de gebruiker maximaal 4 klikbare keuze-knoppen als vervolgactie na je antwoord. Gebruik dit alleen op zinvolle beslismomenten (materiaaltype, glastype, urgentie, aantal ramen).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array van maximaal 4 korte keuze-strings",
+        },
+      },
+      required: ["options"],
     },
   },
 ];
@@ -245,11 +269,11 @@ function calculatePriceEstimate(input: PriceInput): string {
   const aantal = input.aantal ?? 1;
 
   const ranges: Record<string, { min: number; max: number; eenheid: string }> = {
-    kozijn_pvc: { min: 400, max: 700, eenheid: "m²" },
+    kozijn_kunststof: { min: 400, max: 700, eenheid: "m²" },
     kozijn_aluminium: { min: 600, max: 1000, eenheid: "m²" },
-    voordeur_pvc: { min: 1800, max: 3500, eenheid: "stuk" },
+    voordeur_kunststof: { min: 1800, max: 3500, eenheid: "stuk" },
     voordeur_aluminium: { min: 2500, max: 5000, eenheid: "stuk" },
-    schuifpui_pvc: { min: 2000, max: 4500, eenheid: "meter breedte" },
+    schuifpui_kunststof: { min: 2000, max: 4500, eenheid: "meter breedte" },
     schuifpui_aluminium: { min: 3000, max: 6000, eenheid: "meter breedte" },
   };
 
@@ -257,11 +281,11 @@ function calculatePriceEstimate(input: PriceInput): string {
   if (!range) return "Onbekend producttype.";
 
   const labelMap: Record<string, string> = {
-    kozijn_pvc: "PVC kozijn",
+    kozijn_kunststof: "Kunststof kozijn",
     kozijn_aluminium: "Aluminium kozijn",
-    voordeur_pvc: "PVC voordeur",
+    voordeur_kunststof: "Kunststof voordeur",
     voordeur_aluminium: "Aluminium voordeur",
-    schuifpui_pvc: "PVC schuifpui",
+    schuifpui_kunststof: "Kunststof schuifpui",
     schuifpui_aluminium: "Aluminium schuifpui",
   };
 
@@ -285,6 +309,8 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       return calculateIsdeSubsidy(input as unknown as IsdeInput);
     case "calculate_price_estimate":
       return calculatePriceEstimate(input as unknown as PriceInput);
+    case "suggest_options":
+      return "Opties worden getoond aan de gebruiker.";
     default:
       return `Onbekende tool: ${name}`;
   }
@@ -339,6 +365,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   ];
 
   let reply = "";
+  let options: string[] = [];
 
   try {
     // Agentic loop
@@ -366,6 +393,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
           toolUseBlocks.map(async (block) => {
+            if (block.name === "suggest_options") {
+              const raw = (block.input as { options?: unknown }).options;
+              if (Array.isArray(raw)) {
+                options = raw.filter((o): o is string => typeof o === "string").slice(0, 4);
+              }
+            }
             const result = await executeTool(block.name, block.input as Record<string, unknown>);
             return {
               type: "tool_result" as const,
@@ -387,7 +420,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     await saveHistory(sid, messages);
 
-    return res.status(200).json({ reply, sessionId: sid });
+    return res.status(200).json({ reply, options, sessionId: sid });
   } catch (err) {
     console.error("Chat handler fout:", err);
     return res.status(500).json({ error: "Interne serverfout. Probeer het later opnieuw." });
