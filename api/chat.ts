@@ -405,7 +405,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // If the only tool call was suggest_options we already have the reply; no need to continue.
         const realToolBlocks = toolUseBlocks.filter((b) => b.name !== "suggest_options");
-        if (realToolBlocks.length === 0) break;
+        if (realToolBlocks.length === 0) {
+          // Replace the last assistant message (which has an unresolved tool_use block) with a
+          // text-only version so the saved history stays valid for the next request.
+          messages[messages.length - 1] = { role: "assistant", content: reply };
+          break;
+        }
 
         const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
           realToolBlocks.map(async (block) => {
@@ -431,7 +436,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({ reply, options, sessionId: sid });
   } catch (err) {
-    console.error("Chat handler fout:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error("Chat handler fout:", { message, stack, sessionId: sid });
     return res.status(500).json({ error: "Interne serverfout. Probeer het later opnieuw." });
   }
 }
