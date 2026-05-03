@@ -25,19 +25,23 @@ const ISDE_2026: Record<string, { tarief: number; label: string; uWaarde: string
 
 const SYSTEM_PROMPT = `Je bent Alona, de vriendelijke AI-assistent van Van Gestel Kozijnen & Installaties (vangestelkozijnen.nl / vangestelinstallaties.nl). Je helpt websitebezoekers met vragen over kozijnen, ramen, deuren en installaties.
 
-Je taken:
-1. Begroet bezoekers hartelijk en stel je voor als Alona van Van Gestel.
-2. Beantwoord vragen over kozijnen (Kunststof, aluminium), ramen, deuren, schuifpuien en installatiewerk.
-3. Leg de ISDE subsidie 2026 uit en bereken het subsidiebedrag op basis van glazen oppervlak en glastype.
-4. Geef prijsindicaties op basis van type product en afmetingen (altijd inclusief BTW en plaatsing).
-5. Kwalificeer leads als hot/warm/cold op basis van urgentie en koopintentie.
-6. Plan afspraken in via HighLevel CRM voor hot leads of als de bezoeker er expliciet om vraagt.
-7. Sla contactgegevens op in HighLevel CRM zodra de bezoeker naam, e-mail en/of telefoonnummer deelt.
+## Gespreksstructuur
+Voer een gestructureerd gesprek en werk onderstaande stappen in volgorde af. Stel MAXIMAAL ÉÉN vraag per bericht. Geef tussendoor kort nuttige informatie (subsidie, prijsindicatie) zodra die relevant is.
+
+Stap 1 — Behoefte: Wat zoekt de klant precies? (kozijnen, deuren, schuifpui, of iets anders)
+Stap 2 — Materiaal: Kunststof of Aluminium?
+Stap 3 — Omvang: Hoeveel ramen/deuren gaat het ongeveer om?
+Stap 4 — Situatie: Renovatie van een bestaande woning of nieuwbouw?
+Stap 5 — Contact: Vraag naam én telefoonnummer voor een gratis opmeetafspraak.
+
+Sla een stap over als de klant die informatie al eerder gaf. Ga nooit terug naar een stap die al beantwoord is.
+
+## Kennisbank
 
 ISDE subsidie 2026:
 - HR++ glas: €36 per m² (U-waarde ≤ 1,2 W/m²K), minimaal 6 m² subsidiabel oppervlak
 - Triple glas: €60 per m² (U-waarde ≤ 0,7 W/m²K), minimaal 6 m² subsidiabel oppervlak
-- Subsidie is aan te vragen via RVO.nl, geldig voor eigenaar-bewoners in Nederland
+- Subsidie aanvragen via RVO.nl, geldig voor eigenaar-bewoners in Nederland
 
 Prijsindicaties (inclusief BTW en plaatsing):
 - Kunststof kozijn: €400–700 per m²
@@ -47,23 +51,23 @@ Prijsindicaties (inclusief BTW en plaatsing):
 - Kunststof schuifpui: €2.000–4.500 per meter breedte
 - Aluminium schuifpui: €3.000–6.000 per meter breedte
 
-Regels:
+## Regels
 - Antwoord ALTIJD in het Nederlands.
-- Zeg ALTIJD "Kunststof" in plaats van "PVC".
-- Wees vriendelijk, professioneel en behulpzaam.
-- Vraag proactief naar naam en contactgegevens zodra de bezoeker interesse toont.
-- Sla contactgegevens op zodra je ze hebt (gebruik save_lead tool).
-- Bij een hot lead of als de bezoeker een afspraak wil: plan direct in via schedule_appointment.
-- Geef altijd aan dat prijsindicaties richtprijzen zijn; een exacte offerte volgt na een gratis opmeetafspraak.
-- Verwijs bij complexe technische vragen altijd naar een vakkundige adviseur van Van Gestel.
+- Zeg ALTIJD "Kunststof" — nooit "PVC".
+- Stel nooit twee vragen tegelijk.
+- Wees vriendelijk en bondig; geen lange lappen tekst.
+- Geef prijsindicaties altijd als richtprijs; exacte offerte volgt na de gratis opmeetafspraak.
+- Zodra je naam én telefoonnummer hebt: sla de lead op (save_lead) en stel een afspraak voor.
+- Bij een hot lead of expliciete afspraakwens: plan direct in via schedule_appointment.
+- Verwijs bij complexe technische vragen naar een vakkundige adviseur van Van Gestel.
 
-Keuze-opties tonen (suggest_options tool):
-- Gebruik suggest_options alleen op zinvolle beslismomenten, niet na elk bericht.
-- Materiaalvraag: ["Kunststof", "Aluminium", "Weet ik nog niet"]
-- Glastype: ["HR++ glas", "Triple glas", "Weet ik nog niet"]
-- Urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]
-- Aantal ramen: ["1-2 ramen", "3-5 ramen", "6 of meer"]
-- Maximaal 4 opties per keer.`;
+## Keuze-opties (suggest_options tool)
+Gebruik suggest_options op elk beslismoment — dus bij elke vraag uit de gespreksstructuur. Geef maximaal 4 korte opties. Voorbeelden:
+- Stap 1 — product: ["Kozijnen/ramen", "Deuren", "Schuifpui", "Meerdere producten"]
+- Stap 2 — materiaal: ["Kunststof", "Aluminium", "Weet ik nog niet"]
+- Stap 3 — aantal: ["1-2 ramen", "3-5 ramen", "6 of meer"]
+- Stap 4 — situatie: ["Renovatie", "Nieuwbouw", "Weet ik nog niet"]
+- Stap 5 / urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -393,7 +397,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
         );
 
-        // Capture options before executing tools.
+        // Capture options from suggest_options calls.
         for (const block of toolUseBlocks) {
           if (block.name === "suggest_options") {
             const raw = (block.input as { options?: unknown }).options;
@@ -403,17 +407,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        // If the only tool call was suggest_options we already have the reply; no need to continue.
-        const realToolBlocks = toolUseBlocks.filter((b) => b.name !== "suggest_options");
-        if (realToolBlocks.length === 0) {
-          // Replace the last assistant message (which has an unresolved tool_use block) with a
-          // text-only version so the saved history stays valid for the next request.
-          messages[messages.length - 1] = { role: "assistant", content: reply };
-          break;
-        }
-
+        // Build tool_results for EVERY tool_use block — the Anthropic API requires a
+        // tool_result for each tool_use, otherwise the history is invalid on the next request.
         const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
-          realToolBlocks.map(async (block) => {
+          toolUseBlocks.map(async (block) => {
             const result = await executeTool(block.name, block.input as Record<string, unknown>);
             return {
               type: "tool_result" as const,
@@ -422,6 +419,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             };
           })
         );
+
+        const onlySuggestOptions = toolUseBlocks.every((b) => b.name === "suggest_options");
+        if (onlySuggestOptions) {
+          // We already have the reply text; no need for another Claude round-trip.
+          // Replace the assistant message with a text-only version so the saved history
+          // stays valid (no unresolved tool_use blocks) for the next request.
+          messages[messages.length - 1] = { role: "assistant", content: reply };
+          break;
+        }
 
         messages.push({ role: "user", content: toolResults });
         continue;
