@@ -323,31 +323,25 @@ async function getAvailableSlots(): Promise<string> {
   const lines: string[] = [];
 
   for (const [key, value] of Object.entries(data)) {
-    // Keys are ISO dates "YYYY-MM-DD"; skip metadata fields
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    if (typeof value !== "object" || value === null) continue;
 
-    let slots: string[] = [];
-    if (Array.isArray(value)) {
-      slots = value
-        .map((s: unknown) => {
-          if (typeof s === "string") return s;
-          if (typeof s === "object" && s !== null) {
-            const obj = s as Record<string, unknown>;
-            return typeof obj.time === "string" ? obj.time : null;
-          }
-          return null;
-        })
-        .filter((s): s is string => s !== null)
-        .slice(0, 6);
-    }
+    const raw = (value as Record<string, unknown>).slots;
+    if (!Array.isArray(raw) || raw.length === 0) continue;
 
-    if (slots.length === 0) continue;
+    // Slots are ISO strings like "2026-05-07T09:00:00+02:00" — extract HH:MM
+    const times = raw
+      .filter((s): s is string => typeof s === "string")
+      .map((s) => s.substring(11, 16))
+      .slice(0, 6);
+
+    if (times.length === 0) continue;
 
     const [y, m, d] = key.split("-").map(Number);
     const label = new Date(y, m - 1, d).toLocaleDateString("nl-NL", {
       weekday: "long", day: "numeric", month: "long",
     });
-    lines.push(`${label}: ${slots.join(", ")}`);
+    lines.push(`${label}: ${times.join(", ")}`);
   }
 
   if (lines.length === 0) {
