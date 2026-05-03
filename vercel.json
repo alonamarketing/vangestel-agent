@@ -1,0 +1,10 @@
+{
+  "installCommand": "npm install",
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "framework": null,
+  "rewrites": [
+    { "source": "/widget.js", "destination": "/api/widget.js" },
+    { "source": "/api/(.*)", "destination": "/api/$1" }
+  ]
+}

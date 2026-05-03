@@ -1,0 +1,395 @@
+import path from "path";
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: path.join(process.cwd(), ".env.local") });
+
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import Anthropic from "@anthropic-ai/sdk";
+import { Redis } from "@upstash/redis";
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+const MODEL = "claude-opus-4-7";
+const MAX_TOKENS = 1024;
+const SESSION_TTL = 60 * 60 * 24;
+const MAX_HISTORY_MESSAGES = 40;
+const HIGHLEVEL_BASE = "https://services.leadconnectorhq.com";
+
+const ISDE_2026: Record<string, { tarief: number; label: string; uWaarde: string; minOppervlak: number }> = {
+  "hr++": { tarief: 36, label: "HR++ glas", uWaarde: "≤ 1,2 W/m²K", minOppervlak: 6 },
+  triple: { tarief: 60, label: "Triple glas", uWaarde: "≤ 0,7 W/m²K", minOppervlak: 6 },
+};
+
+const SYSTEM_PROMPT = `Je bent Alona, de vriendelijke AI-assistent van Van Gestel Kozijnen & Installaties (vangestelkozijnen.nl / vangestelinstallaties.nl). Je helpt websitebezoekers met vragen over kozijnen, ramen, deuren en installaties.
+
+Je taken:
+1. Begroet bezoekers hartelijk en stel je voor als Alona van Van Gestel.
+2. Beantwoord vragen over kozijnen (PVC, aluminium), ramen, deuren, schuifpuien en installatiewerk.
+3. Leg de ISDE subsidie 2026 uit en bereken het subsidiebedrag op basis van glazen oppervlak en glastype.
+4. Geef prijsindicaties op basis van type product en afmetingen (altijd inclusief BTW en plaatsing).
+5. Kwalificeer leads als hot/warm/cold op basis van urgentie en koopintentie.
+6. Plan afspraken in via HighLevel CRM voor hot leads of als de bezoeker er expliciet om vraagt.
+7. Sla contactgegevens op in HighLevel CRM zodra de bezoeker naam, e-mail en/of telefoonnummer deelt.
+
+ISDE subsidie 2026:
+- HR++ glas: €36 per m² (U-waarde ≤ 1,2 W/m²K), minimaal 6 m² subsidiabel oppervlak
+- Triple glas: €60 per m² (U-waarde ≤ 0,7 W/m²K), minimaal 6 m² subsidiabel oppervlak
+- Subsidie is aan te vragen via RVO.nl, geldig voor eigenaar-bewoners in Nederland
+
+Prijsindicaties (inclusief BTW en plaatsing):
+- PVC kozijn: €400–700 per m²
+- Aluminium kozijn: €600–1.000 per m²
+- PVC voordeur: €1.800–3.500 per stuk
+- Aluminium voordeur: €2.500–5.000 per stuk
+- PVC schuifpui: €2.000–4.500 per meter breedte
+- Aluminium schuifpui: €3.000–6.000 per meter breedte
+
+Regels:
+- Antwoord ALTIJD in het Nederlands.
+- Wees vriendelijk, professioneel en behulpzaam.
+- Vraag proactief naar naam en contactgegevens zodra de bezoeker interesse toont.
+- Sla contactgegevens op zodra je ze hebt (gebruik save_lead tool).
+- Bij een hot lead of als de bezoeker een afspraak wil: plan direct in via schedule_appointment.
+- Geef altijd aan dat prijsindicaties richtprijzen zijn; een exacte offerte volgt na een gratis opmeetafspraak.
+- Verwijs bij complexe technische vragen altijd naar een vakkundige adviseur van Van Gestel.`;
+
+const TOOLS: Anthropic.Tool[] = [
+  {
+    name: "save_lead",
+    description: "Sla contactgegevens en leadinformatie op in HighLevel CRM. Gebruik dit zodra je naam, e-mail of telefoonnummer van de bezoeker hebt.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        firstName: { type: "string", description: "Voornaam van de lead" },
+        lastName: { type: "string", description: "Achternaam van de lead" },
+        email: { type: "string", description: "E-mailadres van de lead" },
+        phone: { type: "string", description: "Telefoonnummer van de lead (optioneel)" },
+        interesse: { type: "string", description: "Korte omschrijving van het project of de interesse (bijv. 'PVC kozijnen woonkamer, 4 ramen')" },
+        kwalificatie: { type: "string", enum: ["hot", "warm", "cold"], description: "Leadkwalificatie op basis van urgentie en koopintentie" },
+        notities: { type: "string", description: "Aanvullende notities over de lead of het gesprek (optioneel)" },
+      },
+      required: ["firstName", "kwalificatie"],
+    },
+  },
+  {
+    name: "schedule_appointment",
+    description: "Plan een gratis opmeetafspraak in via HighLevel CRM voor de bezoeker.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        contactId: { type: "string", description: "HighLevel contact ID (verkregen na save_lead)" },
+        firstName: { type: "string", description: "Voornaam van de contactpersoon" },
+        email: { type: "string", description: "E-mailadres van de contactpersoon" },
+        phone: { type: "string", description: "Telefoonnummer van de contactpersoon" },
+        startTime: { type: "string", description: "Gewenste datum en tijd voor de afspraak in ISO 8601 formaat (bijv. 2026-06-15T10:00:00+02:00)" },
+        notities: { type: "string", description: "Notities voor de afspraak (optioneel)" },
+      },
+      required: ["firstName", "email", "startTime"],
+    },
+  },
+  {
+    name: "calculate_isde_subsidy",
+    description: "Bereken het ISDE subsidiebedrag 2026 op basis van glastype en oppervlak.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        glasType: { type: "string", enum: ["hr++", "triple"], description: "Type isolatieglas: hr++ of triple" },
+        oppervlakM2: { type: "number", description: "Totaal te vervangen glasoppervlak in m²" },
+      },
+      required: ["glasType", "oppervlakM2"],
+    },
+  },
+  {
+    name: "calculate_price_estimate",
+    description: "Bereken een richtprijs voor kozijnen, deuren of schuifpuien inclusief BTW en plaatsing.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        productType: {
+          type: "string",
+          enum: ["kozijn_pvc", "kozijn_aluminium", "voordeur_pvc", "voordeur_aluminium", "schuifpui_pvc", "schuifpui_aluminium"],
+          description: "Type product",
+        },
+        maat: {
+          type: "number",
+          description: "Maat in m² (voor kozijnen), stuks (voor deuren) of meters breedte (voor schuifpuien)",
+        },
+        aantal: { type: "number", description: "Aantal stuks (standaard 1)" },
+      },
+      required: ["productType", "maat"],
+    },
+  },
+];
+
+interface LeadInput {
+  firstName: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  interesse?: string;
+  kwalificatie: "hot" | "warm" | "cold";
+  notities?: string;
+}
+
+interface AppointmentInput {
+  contactId?: string;
+  firstName: string;
+  email: string;
+  phone?: string;
+  startTime: string;
+  notities?: string;
+}
+
+interface IsdeInput {
+  glasType: "hr++" | "triple";
+  oppervlakM2: number;
+}
+
+interface PriceInput {
+  productType: string;
+  maat: number;
+  aantal?: number;
+}
+
+async function hlHeaders() {
+  return {
+    Authorization: `Bearer ${process.env.HIGHLEVEL_API_KEY}`,
+    "Content-Type": "application/json",
+    Version: "2021-07-28",
+  };
+}
+
+async function saveLead(input: LeadInput): Promise<string> {
+  const body: Record<string, unknown> = {
+    firstName: input.firstName,
+    locationId: process.env.HIGHLEVEL_LOCATION_ID,
+    tags: ["website-chat", `lead-${input.kwalificatie}`],
+    customFields: [
+      { id: "interesse", value: input.interesse ?? "" },
+      { id: "kwalificatie", value: input.kwalificatie },
+    ],
+  };
+  if (input.lastName) body.lastName = input.lastName;
+  if (input.email) body.email = input.email;
+  if (input.phone) body.phone = input.phone;
+  if (input.notities) body.notes = input.notities;
+
+  const res = await fetch(`${HIGHLEVEL_BASE}/contacts/`, {
+    method: "POST",
+    headers: await hlHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    return `Fout bij opslaan lead: ${res.status} — ${err}`;
+  }
+
+  const data = (await res.json()) as { contact?: { id?: string } };
+  const contactId = data?.contact?.id ?? "onbekend";
+  return `Lead opgeslagen in CRM. Contact ID: ${contactId}. Kwalificatie: ${input.kwalificatie}.`;
+}
+
+async function scheduleAppointment(input: AppointmentInput): Promise<string> {
+  const calendarId = process.env.HIGHLEVEL_CALENDAR_ID;
+  if (!calendarId) return "HIGHLEVEL_CALENDAR_ID is niet geconfigureerd.";
+
+  const body: Record<string, unknown> = {
+    calendarId,
+    locationId: process.env.HIGHLEVEL_LOCATION_ID,
+    contactId: input.contactId,
+    startTime: input.startTime,
+    title: `Gratis opmeetafspraak — ${input.firstName}`,
+    appointmentStatus: "new",
+  };
+  if (input.email) body.email = input.email;
+  if (input.phone) body.phone = input.phone;
+  if (input.notities) body.notes = input.notities;
+
+  const res = await fetch(`${HIGHLEVEL_BASE}/calendars/events/appointments`, {
+    method: "POST",
+    headers: await hlHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    return `Fout bij inplannen afspraak: ${res.status} — ${err}`;
+  }
+
+  const data = (await res.json()) as { id?: string };
+  return `Afspraak ingepland op ${input.startTime}. Afspraak ID: ${data?.id ?? "onbekend"}.`;
+}
+
+function calculateIsdeSubsidy(input: IsdeInput): string {
+  const glasInfo = ISDE_2026[input.glasType];
+  if (!glasInfo) return "Ongeldig glastype. Kies hr++ of triple.";
+
+  if (input.oppervlakM2 < glasInfo.minOppervlak) {
+    return `Helaas kom je niet in aanmerking voor ISDE subsidie: het minimale subsidiabele oppervlak is ${glasInfo.minOppervlak} m², maar je opgegeven oppervlak is ${input.oppervlakM2} m².`;
+  }
+
+  const bedrag = Math.round(glasInfo.tarief * input.oppervlakM2);
+  return `ISDE subsidie berekening 2026:
+- Glastype: ${glasInfo.label} (U-waarde ${glasInfo.uWaarde})
+- Oppervlak: ${input.oppervlakM2} m²
+- Subsidietarief: €${glasInfo.tarief} per m²
+- Totaal subsidiebedrag: €${bedrag}
+- Aanvragen via: RVO.nl (geldig voor eigenaar-bewoners)`;
+}
+
+function calculatePriceEstimate(input: PriceInput): string {
+  const aantal = input.aantal ?? 1;
+
+  const ranges: Record<string, { min: number; max: number; eenheid: string }> = {
+    kozijn_pvc: { min: 400, max: 700, eenheid: "m²" },
+    kozijn_aluminium: { min: 600, max: 1000, eenheid: "m²" },
+    voordeur_pvc: { min: 1800, max: 3500, eenheid: "stuk" },
+    voordeur_aluminium: { min: 2500, max: 5000, eenheid: "stuk" },
+    schuifpui_pvc: { min: 2000, max: 4500, eenheid: "meter breedte" },
+    schuifpui_aluminium: { min: 3000, max: 6000, eenheid: "meter breedte" },
+  };
+
+  const range = ranges[input.productType];
+  if (!range) return "Onbekend producttype.";
+
+  const labelMap: Record<string, string> = {
+    kozijn_pvc: "PVC kozijn",
+    kozijn_aluminium: "Aluminium kozijn",
+    voordeur_pvc: "PVC voordeur",
+    voordeur_aluminium: "Aluminium voordeur",
+    schuifpui_pvc: "PVC schuifpui",
+    schuifpui_aluminium: "Aluminium schuifpui",
+  };
+
+  const totaalMin = Math.round(range.min * input.maat * aantal);
+  const totaalMax = Math.round(range.max * input.maat * aantal);
+
+  return `Richtprijs indicatie (incl. BTW en plaatsing):
+- Product: ${labelMap[input.productType]}
+- Maat: ${input.maat} ${range.eenheid}${aantal > 1 ? ` × ${aantal} stuks` : ""}
+- Richtprijs: €${totaalMin.toLocaleString("nl-NL")} – €${totaalMax.toLocaleString("nl-NL")}
+- Dit is een indicatie; een exacte offerte volgt na een gratis opmeetafspraak bij u thuis.`;
+}
+
+async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+  switch (name) {
+    case "save_lead":
+      return saveLead(input as unknown as LeadInput);
+    case "schedule_appointment":
+      return scheduleAppointment(input as unknown as AppointmentInput);
+    case "calculate_isde_subsidy":
+      return calculateIsdeSubsidy(input as unknown as IsdeInput);
+    case "calculate_price_estimate":
+      return calculatePriceEstimate(input as unknown as PriceInput);
+    default:
+      return `Onbekende tool: ${name}`;
+  }
+}
+
+type MessageParam = Anthropic.MessageParam;
+
+async function loadHistory(sessionId: string): Promise<MessageParam[]> {
+  try {
+    const raw = await redis.get<MessageParam[]>(`session:${sessionId}`);
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHistory(sessionId: string, messages: MessageParam[]): Promise<void> {
+  const trimmed = messages.slice(-MAX_HISTORY_MESSAGES);
+  await redis.set(`session:${sessionId}`, trimmed, { ex: SESSION_TTL });
+}
+
+function setCors(res: VercelResponse): void {
+  // Restrict to Van Gestel domains in production
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  setCors(res);
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const { message, sessionId } = req.body as { message?: string; sessionId?: string };
+
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error: "Bericht ontbreekt." });
+  }
+
+  const sid = sessionId && typeof sessionId === "string" ? sessionId : crypto.randomUUID();
+
+  const history = await loadHistory(sid);
+  const messages: MessageParam[] = [
+    ...history,
+    { role: "user", content: message.trim() },
+  ];
+
+  let reply = "";
+
+  try {
+    // Agentic loop
+    while (true) {
+      const response = await anthropic.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
+        messages,
+      });
+
+      messages.push({ role: "assistant", content: response.content });
+
+      if (response.stop_reason === "end_turn") {
+        const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+        reply = textBlock?.text ?? "";
+        break;
+      }
+
+      if (response.stop_reason === "tool_use") {
+        const toolUseBlocks = response.content.filter(
+          (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+        );
+
+        const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+          toolUseBlocks.map(async (block) => {
+            const result = await executeTool(block.name, block.input as Record<string, unknown>);
+            return {
+              type: "tool_result" as const,
+              tool_use_id: block.id,
+              content: result,
+            };
+          })
+        );
+
+        messages.push({ role: "user", content: toolResults });
+        continue;
+      }
+
+      // max_tokens or other stop reason — extract any text and stop
+      const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      reply = textBlock?.text ?? "Er is iets misgegaan. Probeer het opnieuw.";
+      break;
+    }
+
+    await saveHistory(sid, messages);
+
+    return res.status(200).json({ reply, sessionId: sid });
+  } catch (err) {
+    console.error("Chat handler fout:", err);
+    return res.status(500).json({ error: "Interne serverfout. Probeer het later opnieuw." });
+  }
+}
