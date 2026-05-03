@@ -31,10 +31,10 @@ function buildSystemPrompt(): string {
     weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz,
   });
   const now = new Date();
-  const in14 = new Date(now);
-  in14.setDate(in14.getDate() + 14);
+  const in30 = new Date(now);
+  in30.setDate(in30.getDate() + 30);
   const vandaag = dateFmt.format(now);
-  const over14dagen = dateFmt.format(in14);
+  const over30dagen = dateFmt.format(in30);
 
   return `Je bent Alona, de vriendelijke AI-assistent van Van Gestel Kozijnen & Installaties (vangestelkozijnen.nl / vangestelinstallaties.nl). Je helpt websitebezoekers met vragen over kozijnen, ramen, deuren en installaties.
 
@@ -79,7 +79,7 @@ Prijsindicaties (inclusief BTW en plaatsing):
 - Verwijs bij complexe technische vragen naar een vakkundige adviseur van Van Gestel.
 - Gebruik NOOIT markdown-opmaak: geen **, geen *, geen #, geen _, geen backticks. Schrijf altijd gewone platte tekst.
 - Roep ALTIJD eerst get_available_slots aan voordat je een afspraaktijd voorstelt. Stel uitsluitend tijdslots voor die in het resultaat van die tool staan.
-- Plan afspraken ALTIJD binnen de komende 14 dagen (${vandaag} t/m ${over14dagen}). Stel nooit een datum voor die al geweest is.
+- Plan afspraken ALTIJD binnen de komende 30 dagen (${vandaag} t/m ${over30dagen}). Stel nooit een datum voor die al geweest is.
 
 ## Keuze-opties (suggest_options tool)
 Roep suggest_options VERPLICHT aan bij elke vraag uit de gespreksstructuur. Geen uitzonderingen. Gebruik exact de onderstaande opties per stap:
@@ -290,24 +290,35 @@ async function getAvailableSlots(): Promise<string> {
   if (!calendarId) return "HIGHLEVEL_CALENDAR_ID is niet geconfigureerd.";
 
   const now = new Date();
-  const in14 = new Date(now);
-  in14.setDate(in14.getDate() + 14);
+  const in30 = new Date(now);
+  in30.setDate(in30.getDate() + 30);
 
-  // HighLevel expects Unix timestamps in milliseconds
+  // HighLevel accepts both millisecond timestamps and YYYY-MM-DD strings.
+  // Log both so we can verify the format in Vercel logs.
+  const startMs = now.getTime();
+  const endMs = in30.getTime();
+  const startISO = now.toISOString().split("T")[0];
+  const endISO = in30.toISOString().split("T")[0];
+
   const url =
     `${HIGHLEVEL_BASE}/calendars/${calendarId}/free-slots` +
-    `?startDate=${now.getTime()}&endDate=${in14.getTime()}` +
+    `?startDate=${startMs}&endDate=${endMs}` +
     `&timezone=${encodeURIComponent("Europe/Amsterdam")}`;
+
+  console.log("[free-slots] URL:", url);
+  console.log("[free-slots] startDate ms:", startMs, "ISO:", startISO);
+  console.log("[free-slots] endDate ms:", endMs, "ISO:", endISO);
 
   const res = await fetch(url, { headers: await hlHeaders() });
 
   if (!res.ok) {
     const err = await res.text();
-    console.error("HighLevel free-slots fout:", res.status, err);
+    console.error("[free-slots] HTTP fout:", res.status, err);
     return `Fout bij ophalen beschikbare tijdslots: ${res.status}`;
   }
 
   const data = (await res.json()) as Record<string, unknown>;
+  console.log("[free-slots] raw response:", JSON.stringify(data));
 
   const lines: string[] = [];
 
@@ -340,7 +351,7 @@ async function getAvailableSlots(): Promise<string> {
   }
 
   if (lines.length === 0) {
-    return "Geen beschikbare tijdslots gevonden voor de komende 14 dagen.";
+    return "Geen beschikbare tijdslots gevonden voor de komende 30 dagen.";
   }
 
   return "Beschikbare tijdslots:\n" + lines.join("\n");
