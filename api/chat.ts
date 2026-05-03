@@ -5,8 +5,10 @@ loadEnv({ path: path.join(process.cwd(), ".env.local") });
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import Anthropic from "@anthropic-ai/sdk";
 import { Redis } from "@upstash/redis";
+import { Resend } from "resend";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const resend = new Resend(process.env.RESEND_API_KEY);
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
@@ -190,6 +192,30 @@ async function hlHeaders() {
   };
 }
 
+async function sendLeadEmail(input: LeadInput, contactId: string): Promise<void> {
+  const naam = [input.firstName, input.lastName].filter(Boolean).join(" ");
+  const { error } = await resend.emails.send({
+    from: "Alona <noreply@vangestelkozijnen.nl>",
+    to: "thijsvandenhaak@gmail.com",
+    subject: `Nieuwe lead Van Gestel: ${naam}`,
+    html: `
+      <h2>Nieuwe lead via de website chat</h2>
+      <table cellpadding="6" style="border-collapse:collapse;font-family:sans-serif;font-size:14px">
+        <tr><td><strong>Naam</strong></td><td>${naam}</td></tr>
+        ${input.phone ? `<tr><td><strong>Telefoon</strong></td><td>${input.phone}</td></tr>` : ""}
+        ${input.email ? `<tr><td><strong>E-mail</strong></td><td>${input.email}</td></tr>` : ""}
+        <tr><td><strong>Kwalificatie</strong></td><td>${input.kwalificatie.toUpperCase()}</td></tr>
+        ${input.interesse ? `<tr><td><strong>Interesse</strong></td><td>${input.interesse}</td></tr>` : ""}
+        ${input.notities ? `<tr><td><strong>Notities</strong></td><td>${input.notities}</td></tr>` : ""}
+        <tr><td><strong>CRM contact ID</strong></td><td>${contactId}</td></tr>
+      </table>
+    `,
+  });
+  if (error) {
+    console.error("Resend fout bij versturen lead e-mail:", error);
+  }
+}
+
 async function saveLead(input: LeadInput): Promise<string> {
   const body: Record<string, unknown> = {
     firstName: input.firstName,
@@ -218,6 +244,12 @@ async function saveLead(input: LeadInput): Promise<string> {
 
   const data = (await res.json()) as { contact?: { id?: string } };
   const contactId = data?.contact?.id ?? "onbekend";
+
+  // Fire-and-forget: don't let email errors block the chat response.
+  sendLeadEmail(input, contactId).catch((e) =>
+    console.error("sendLeadEmail onverwachte fout:", e)
+  );
+
   return `Lead opgeslagen in CRM. Contact ID: ${contactId}. Kwalificatie: ${input.kwalificatie}.`;
 }
 
