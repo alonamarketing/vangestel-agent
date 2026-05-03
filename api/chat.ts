@@ -25,7 +25,20 @@ const ISDE_2026: Record<string, { tarief: number; label: string; uWaarde: string
   triple: { tarief: 60, label: "Triple glas", uWaarde: "≤ 0,7 W/m²K", minOppervlak: 6 },
 };
 
-const SYSTEM_PROMPT = `Je bent Alona, de vriendelijke AI-assistent van Van Gestel Kozijnen & Installaties (vangestelkozijnen.nl / vangestelinstallaties.nl). Je helpt websitebezoekers met vragen over kozijnen, ramen, deuren en installaties.
+function buildSystemPrompt(): string {
+  const tz = "Europe/Amsterdam";
+  const dateFmt = new Intl.DateTimeFormat("nl-NL", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz,
+  });
+  const now = new Date();
+  const in14 = new Date(now);
+  in14.setDate(in14.getDate() + 14);
+  const vandaag = dateFmt.format(now);
+  const over14dagen = dateFmt.format(in14);
+
+  return `Je bent Alona, de vriendelijke AI-assistent van Van Gestel Kozijnen & Installaties (vangestelkozijnen.nl / vangestelinstallaties.nl). Je helpt websitebezoekers met vragen over kozijnen, ramen, deuren en installaties.
+
+Huidige datum: ${vandaag}.
 
 ## Gespreksstructuur
 Voer een gestructureerd gesprek en werk onderstaande stappen in volgorde af. Stel MAXIMAAL ÉÉN vraag per bericht. Geef tussendoor kort nuttige informatie (subsidie, prijsindicatie) zodra die relevant is.
@@ -62,6 +75,8 @@ Prijsindicaties (inclusief BTW en plaatsing):
 - Zodra je naam én telefoonnummer hebt: sla de lead op (save_lead) en stel een afspraak voor.
 - Bij een hot lead of expliciete afspraakwens: plan direct in via schedule_appointment.
 - Verwijs bij complexe technische vragen naar een vakkundige adviseur van Van Gestel.
+- Gebruik NOOIT markdown-opmaak: geen **, geen *, geen #, geen _, geen backticks. Schrijf altijd gewone platte tekst.
+- Plan afspraken ALTIJD binnen de komende 14 dagen (${vandaag} t/m ${over14dagen}). Stel nooit een datum voor die al geweest is.
 
 ## Keuze-opties (suggest_options tool)
 Gebruik suggest_options op elk beslismoment — dus bij elke vraag uit de gespreksstructuur. Geef maximaal 4 korte opties. Voorbeelden:
@@ -70,6 +85,7 @@ Gebruik suggest_options op elk beslismoment — dus bij elke vraag uit de gespre
 - Stap 3 — aantal: ["1-2 ramen", "3-5 ramen", "6 of meer"]
 - Stap 4 — situatie: ["Renovatie", "Nieuwbouw", "Weet ik nog niet"]
 - Stap 5 / urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]`;
+}
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -409,7 +425,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const response = await anthropic.messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM_PROMPT,
+        system: buildSystemPrompt(),
         tools: TOOLS,
         messages,
       });
