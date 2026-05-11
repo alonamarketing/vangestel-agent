@@ -88,7 +88,8 @@ Roep suggest_options VERPLICHT aan bij elke vraag uit de gespreksstructuur. Geen
 - Stap 2 — materiaal: ["Kunststof", "Aluminium", "Weet ik nog niet"]
 - Stap 3 — aantal: ["1-2 ramen", "3-5 ramen", "6 of meer", "Weet ik nog niet"]
 - Stap 4 — situatie: ["Renovatie", "Nieuwbouw", "Weet ik nog niet"]
-- Stap 5 / urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]`;
+- Stap 5 / urgentie: ["Zo snel mogelijk", "Binnen 3 maanden", "Alleen oriënteren"]
+- Tijdslots: Zodra je tijdslots voorstelt aan de klant, roep je ALTIJD suggest_options aan met maximaal 4 tijdslots als klikbare opties. Formatteer elk slot als "Dag DD maand om HH:MM" (bijv. "Donderdag 14 mei om 11:30"). Kies de meest gespreide opties uit het resultaat van get_available_slots.`;
 }
 
 const TOOLS: Anthropic.Tool[] = [
