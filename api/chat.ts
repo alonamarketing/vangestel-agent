@@ -19,6 +19,7 @@ const MAX_TOKENS = 1024;
 const SESSION_TTL = 60 * 60 * 24;
 const MAX_HISTORY_MESSAGES = 40;
 const HIGHLEVEL_BASE = "https://services.leadconnectorhq.com";
+const GHL_CONTACT_BASE = "https://app.gohighlevel.com/v2/location/yLO4s3vhQV15pgMOCIXq/contacts/detail/";
 
 const ISDE_2026: Record<string, { tarief: number; label: string; uWaarde: string; minOppervlak: number }> = {
   "hr++": { tarief: 36, label: "HR++ glas", uWaarde: "≤ 1,2 W/m²K", minOppervlak: 6 },
@@ -239,6 +240,7 @@ async function sendLeadEmail(input: LeadInput, contactId: string): Promise<void>
         ${input.interesse ? `<tr><td><strong>Interesse</strong></td><td>${input.interesse}</td></tr>` : ""}
         ${input.notities ? `<tr><td><strong>Notities</strong></td><td>${input.notities}</td></tr>` : ""}
         <tr><td><strong>CRM contact ID</strong></td><td>${contactId}</td></tr>
+        ${contactId !== "onbekend" ? `<tr><td><strong>Open in GHL</strong></td><td><a href="${GHL_CONTACT_BASE}${contactId}" style="color:#1a3c5e;font-weight:600;">${contactId} — open in GHL</a></td></tr>` : ""}
       </table>
     `,
   });
@@ -362,6 +364,7 @@ async function scheduleAppointment(input: AppointmentInput): Promise<string> {
     startTime: input.startTime,
     title: `Gratis opmeetafspraak — ${input.firstName}`,
     appointmentStatus: "new",
+    assignedUserId: process.env.HIGHLEVEL_NATALIE_USER_ID,
   };
   if (input.email) body.email = input.email;
   if (input.phone) body.phone = input.phone;
